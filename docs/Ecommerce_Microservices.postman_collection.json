@@ -1,0 +1,414 @@
+{
+  "info": {
+    "name": "Ecommerce Microservices",
+    "description": "Complete API collection for Ecommerce Microservices Architecture",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "gateway_url",
+      "value": "http://localhost:5000"
+    },
+    {
+      "key": "product_service_url",
+      "value": "http://localhost:5001"
+    },
+    {
+      "key": "product_detail_service_url",
+      "value": "http://localhost:5002"
+    },
+    {
+      "key": "cart_service_url",
+      "value": "http://localhost:5003"
+    },
+    {
+      "key": "order_service_url",
+      "value": "http://localhost:5004"
+    },
+    {
+      "key": "notification_service_url",
+      "value": "http://localhost:5005"
+    },
+    {
+      "key": "admin_token",
+      "value": ""
+    },
+    {
+      "key": "user_token",
+      "value": ""
+    },
+    {
+      "key": "user_id",
+      "value": ""
+    },
+    {
+      "key": "product_id",
+      "value": ""
+    },
+    {
+      "key": "product_detail_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Authentication",
+      "item": [
+        {
+          "name": "1.1 Get Admin Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set('admin_token', jsonData.token);",
+                  "pm.test('Token generated', function() {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(jsonData.token).to.not.be.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@ecommerce.com\",\n  \"role\": \"Admin\",\n  \"userId\": \"11111111-1111-1111-1111-111111111111\"\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/auth/token",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "auth", "token"]
+            }
+          }
+        },
+        {
+          "name": "1.2 Get User Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set('user_token', jsonData.token);",
+                  "pm.collectionVariables.set('user_id', jsonData.userId);",
+                  "pm.test('Token generated', function() {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(jsonData.token).to.not.be.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"role\": \"User\"\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/auth/token",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "auth", "token"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Product Service (Admin)",
+      "item": [
+        {
+          "name": "2.1 Create Product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.data) { pm.collectionVariables.set('product_id', jsonData.data.id); }",
+                  "pm.test('Product created', function() {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Premium Wireless Headphones\",\n  \"category\": \"Electronics\",\n  \"description\": \"Noise-cancelling Bluetooth headphones with 30hr battery\"\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/products",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "products"]
+            }
+          }
+        },
+        {
+          "name": "2.2 Get All Products (Paginated)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/products?page=1&pageSize=10",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "products"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "2.3 Get Product By Id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/products/{{product_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "products", "{{product_id}}"]
+            }
+          }
+        },
+        {
+          "name": "2.4 Delete Product",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/products/{{product_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "products", "{{product_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Product Detail Service (Admin)",
+      "item": [
+        {
+          "name": "3.1 Add Product Detail (Size/Price/Design)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.data) { pm.collectionVariables.set('product_detail_id', jsonData.data.id); }",
+                  "pm.test('Detail added', function() {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"{{product_id}}\",\n  \"size\": \"Large\",\n  \"price\": 149.99,\n  \"design\": \"Over-ear\",\n  \"color\": \"Matte Black\",\n  \"stockQuantity\": 50\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/productdetails",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "productdetails"]
+            }
+          }
+        },
+        {
+          "name": "3.2 Get Product Details by Product ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/productdetails/product/{{product_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "productdetails", "product", "{{product_id}}"]
+            }
+          }
+        },
+        {
+          "name": "3.3 Get Product Detail By Id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/productdetails/{{product_detail_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "productdetails", "{{product_detail_id}}"]
+            }
+          }
+        },
+        {
+          "name": "3.4 Remove Product Detail",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/productdetails/{{product_detail_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "productdetails", "{{product_detail_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Cart Service (User)",
+      "item": [
+        {
+          "name": "4.1 Add Item to Cart",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"{{product_id}}\",\n  \"productDetailId\": \"{{product_detail_id}}\",\n  \"productName\": \"Premium Wireless Headphones\",\n  \"size\": \"Large\",\n  \"price\": 149.99,\n  \"quantity\": 2\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/cart/{{user_id}}/items",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "cart", "{{user_id}}", "items"]
+            }
+          }
+        },
+        {
+          "name": "4.2 View Cart",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/cart/{{user_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "cart", "{{user_id}}"]
+            }
+          }
+        },
+        {
+          "name": "4.3 Clear Cart",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/cart/{{user_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "cart", "{{user_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Checkout & Orders",
+      "item": [
+        {
+          "name": "5.1 Checkout (Orchestrator)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/orders/checkout/{{user_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "orders", "checkout", "{{user_id}}"]
+            }
+          }
+        },
+        {
+          "name": "5.2 Get User Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/orders/user/{{user_id}}",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "orders", "user", "{{user_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Notification Service",
+      "item": [
+        {
+          "name": "6.1 Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/notifications/health",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "notifications", "health"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Direct Service Access (No Gateway)",
+      "item": [
+        {
+          "name": "7.1 Product Service Direct - Get All",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{product_service_url}}/api/products",
+              "host": ["{{product_service_url}}"],
+              "path": ["api", "products"]
+            }
+          }
+        },
+        {
+          "name": "7.2 Product Detail Service Direct - Get All by Product",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{product_detail_service_url}}/api/productdetails/product/{{product_id}}",
+              "host": ["{{product_detail_service_url}}"],
+              "path": ["api", "productdetails", "product", "{{product_id}}"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

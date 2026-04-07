@@ -1,0 +1,115 @@
+services:
+  # Infrastructure
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ecommerce-net
+
+  consul:
+    image: consul:1.15
+    container_name: consul
+    ports:
+      - "8500:8500"
+    command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+    networks:
+      - ecommerce-net
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: src/ApiGateway/Dockerfile
+    container_name: api-gateway
+    ports:
+      - "5000:5000"
+    depends_on:
+      - product-service
+      - product-detail_service
+      - cart.service
+      - order-orchestrator-service
+      - notification-service
+    networks:
+      - ecommerce-net
+
+  # Product Service
+  product-service:
+    build:
+      context: .
+      dockerfile: src/ProductService/Dockerfile
+    container_name: product-service
+    ports:
+      - "5001:5001"
+    networks:
+      - ecommerce-net
+
+  # Product Detail Service
+  product-detail_service:
+    build:
+      context: .
+      dockerfile: src/ProductDetailService/Dockerfile
+    container_name: product-detail_service
+    ports:
+      - "5002:5002"
+    networks:
+      - ecommerce-net
+
+  # Cart Service
+  cart.service:
+    build:
+      context: .
+      dockerfile: src/CartService/Dockerfile
+    container_name: cart.service
+    ports:
+      - "5003:5003"
+    networks:
+      - ecommerce-net
+
+  # Order Orchestrator Service
+  order-orchestrator-service:
+    build:
+      context: .
+      dockerfile: src/OrderOrchestratorService/Dockerfile
+    container_name: order-orchestrator-service
+    ports:
+      - "5004:5004"
+    environment:
+      - ServiceUrls__CartService=http://cart.service:5003
+      - ServiceUrls__ProductDetailService=http://product-detail_service:5002
+      - RabbitMQ__Host=rabbitmq
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - ecommerce-net
+
+  # Notification Service
+  notification-service:
+    build:
+      context: .
+      dockerfile: src/NotificationService/Dockerfile
+    container_name: notification-service
+    ports:
+      - "5005:5005"
+    environment:
+      - RabbitMQ__Host=rabbitmq
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - ecommerce-net
+
+networks:
+  ecommerce-net:
+    driver: bridge
