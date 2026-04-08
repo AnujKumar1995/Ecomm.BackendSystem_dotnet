@@ -1345,7 +1345,7 @@ graph TB
         D2 --> D3["CreateProductHandler.Handle()"]
         D3 --> D4["new Product {<br/>Id = Guid.NewGuid(),<br/>IsActive = true,<br/>CreatedAt = DateTime.UtcNow}"]
         D4 --> D5["repository.Add(product)"]
-        D5 --> D6["ConcurrentDictionary.AddOrUpdate()"]
+        D5 --> D6["_products[product.Id] = product"]
     end
 
     D6 --> E["Response: 201 Created<br/>{success: true, data: {product}}"]
