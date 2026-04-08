@@ -1108,11 +1108,13 @@ graph LR
     F4 --> REG
 ```
 
-**What happens at Step 6 (Repository created):**
+**What happens at Step 6 (Repository registration):**
 
 ```mermaid
 graph LR
-    R["AddSingleton ProductRepository"] --> C["Constructor runs"]
+    R["AddSingleton ProductRepository"] --> DI["Repository registered in DI<br/>with singleton lifetime"]
+    DI --> L["Instance created lazily<br/>when first resolved (default ASP.NET Core DI behavior)"]
+    L --> C["Constructor runs"]
     C --> S["ConcurrentDictionary created"]
     S --> D["Seed data loaded:<br/>3 products / 2 details / empty carts"]
 ```
