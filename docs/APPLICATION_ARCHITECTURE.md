@@ -1050,14 +1050,14 @@ graph TB
         B2["9. UseSwagger + SwaggerUI"]
         B3["10. CorrelationIdMiddleware<br/>(adds X-Correlation-Id header)"]
         B4["11. ExceptionHandlingMiddleware<br/>(catches errors → JSON responses)"]
-        B5["12. MapControllers()<br/>(AuthController handles /api/auth/*)"]
+        B5["12. UseEndpoints(endpoints => endpoints.MapControllers())<br/>(AuthController handles /api/auth/*)"]
         B6["13. UseOcelot()<br/>(proxy unmatched requests to services)"]
         B7["14. app.Run()<br/>Listening on port 5000"]
         B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7
     end
 ```
 
-**Key Point:** `MapControllers()` runs BEFORE `UseOcelot()`. This means:
+**Key Point:** `UseEndpoints(endpoints => endpoints.MapControllers())` runs BEFORE `UseOcelot()`. This means:
 - `/api/auth/token` → handled by local AuthController
 - `/api/products/*` → Ocelot proxies to Product Service
 - Any unmatched route → Ocelot tries to route it
