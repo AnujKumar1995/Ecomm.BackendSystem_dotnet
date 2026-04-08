@@ -966,39 +966,37 @@ graph LR
 
 ## 11. Application Startup — What Executes First?
 
-This section explains exactly what happens when you run `docker compose up --build` or `dotnet run` — step by step, in order.
+This section explains what happens when you run `docker compose up --build` or `dotnet run`. For Docker Compose, note that `depends_on` mainly affects container start order; it does **not** mean a service is fully ready unless a health-based condition is configured.
 
 ---
 
 ### 11.1 Docker Compose Startup Order
 
-When you run `docker compose up --build`, containers start in this order:
+When you run `docker compose up --build`, Docker Compose first builds images, then starts containers. Some containers may start in parallel, and only a few services have explicit startup dependencies:
 
 ```mermaid
 graph TD
     A["docker compose up --build"] --> B["Step 1: Build all Docker images<br/>(multi-stage: restore → build → publish)"]
-    B --> C["Step 2: Start Infrastructure"]
+    B --> C["Step 2: Docker Compose starts containers"]
 
-    C --> RMQ["RabbitMQ :5672<br/>Starts + runs healthcheck<br/>(ping every 10s)"]
-    C --> CONSUL["Consul :8500<br/>Starts immediately"]
+    C --> RMQ["RabbitMQ :5672<br/>Starts and runs healthcheck"]
+    C --> CONSUL["Consul :8500<br/>Started by Compose"]
+    C --> PS["Product Service :5001<br/>No depends_on"]
+    C --> PDS["Product Detail Service :5002<br/>No depends_on"]
+    C --> CS["Cart Service :5003<br/>No depends_on"]
 
-    RMQ -->|"healthcheck passes"| D["Step 3: Start RabbitMQ-dependent services"]
-    D --> OO["Order Orchestrator :5004"]
-    D --> NS["Notification Service :5005"]
+    RMQ -->|"healthcheck passes"| OO["Order Orchestrator :5004<br/>waits for RabbitMQ health"]
+    RMQ -->|"healthcheck passes"| NS["Notification Service :5005<br/>waits for RabbitMQ health"]
 
-    CONSUL --> E["Step 4: Start independent services<br/>(no depends_on wait)"]
-    E --> PS["Product Service :5001"]
-    E --> PDS["Product Detail Service :5002"]
-    E --> CS["Cart Service :5003"]
+    PS --> GWSTART["API Gateway can be started after listed dependencies are started"]
+    PDS --> GWSTART
+    CS --> GWSTART
+    OO --> GWSTART
+    NS --> GWSTART
 
-    PS --> F["Step 5: Start API Gateway<br/>(depends_on all 5 services)"]
-    PDS --> F
-    CS --> F
-    OO --> F
-    NS --> F
-    F --> GW["API Gateway :5000"]
+    GWSTART --> GW["API Gateway :5000<br/>depends_on affects start order only,<br/>not readiness of all 5 services"]
 
-    GW --> G["All Services Ready!"]
+    GW --> G["Containers started; individual services may still be initializing"]
 ```
 
 | Order | Container | Why This Order? |
