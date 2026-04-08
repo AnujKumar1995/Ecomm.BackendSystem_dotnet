@@ -16,6 +16,7 @@
 8. [Notification Service (Port 5005)](#8-notification-service-port-5005)
 9. [Shared Library Internals](#9-shared-library-internals)
 10. [Complete API Reference](#10-complete-api-reference)
+11. [Application Startup — What Executes First?](#11-application-startup--what-executes-first)
 
 ---
 
@@ -960,3 +961,452 @@ graph LR
 | Confirmed | All 5 checkout steps succeed |
 | Failed | Product detail validation fails |
 | Cancelled | Manual cancellation (future feature) |
+
+---
+
+## 11. Application Startup — What Executes First?
+
+This section explains exactly what happens when you run `docker compose up --build` or `dotnet run` — step by step, in order.
+
+---
+
+### 11.1 Docker Compose Startup Order
+
+When you run `docker compose up --build`, containers start in this order:
+
+```mermaid
+graph TD
+    A["docker compose up --build"] --> B["Step 1: Build all Docker images<br/>(multi-stage: restore → build → publish)"]
+    B --> C["Step 2: Start Infrastructure"]
+
+    C --> RMQ["RabbitMQ :5672<br/>Starts + runs healthcheck<br/>(ping every 10s)"]
+    C --> CONSUL["Consul :8500<br/>Starts immediately"]
+
+    RMQ -->|"healthcheck passes"| D["Step 3: Start RabbitMQ-dependent services"]
+    D --> OO["Order Orchestrator :5004"]
+    D --> NS["Notification Service :5005"]
+
+    CONSUL --> E["Step 4: Start independent services<br/>(no depends_on wait)"]
+    E --> PS["Product Service :5001"]
+    E --> PDS["Product Detail Service :5002"]
+    E --> CS["Cart Service :5003"]
+
+    PS --> F["Step 5: Start API Gateway<br/>(depends_on all 5 services)"]
+    PDS --> F
+    CS --> F
+    OO --> F
+    NS --> F
+    F --> GW["API Gateway :5000"]
+
+    GW --> G["All Services Ready!"]
+```
+
+| Order | Container | Why This Order? |
+|-------|-----------|----------------|
+| 1st | RabbitMQ | Infrastructure — other services depend on it |
+| 1st | Consul | Infrastructure — starts independently |
+| 2nd | Product Service | No dependencies — starts immediately |
+| 2nd | Product Detail Service | No dependencies — starts immediately |
+| 2nd | Cart Service | No dependencies — starts immediately |
+| 3rd | Order Orchestrator | Waits for RabbitMQ healthcheck to pass |
+| 3rd | Notification Service | Waits for RabbitMQ healthcheck to pass |
+| 4th | API Gateway | Waits for all 5 microservices to start |
+
+---
+
+### 11.2 What Happens Inside Each Service on Startup (Program.cs)
+
+Every .NET service follows a two-phase startup: **Build Phase** (register services) then **Run Phase** (configure pipeline).
+
+```mermaid
+graph TB
+    A["dotnet run / Container starts"] --> B["Phase 1: BUILD<br/>WebApplication.CreateBuilder(args)"]
+    B --> B1["Configure Serilog Logger"]
+    B1 --> B2["Register Services into DI Container"]
+    B2 --> B3["builder.Build() → creates WebApplication"]
+    B3 --> C["Phase 2: RUN<br/>Configure HTTP Pipeline"]
+    C --> C1["Add Middleware (in order)"]
+    C1 --> C2["Map Controller Routes"]
+    C2 --> C3["app.Run() → Start Listening for HTTP Requests"]
+```
+
+---
+
+### 11.3 API Gateway — Startup Sequence
+
+```mermaid
+graph TB
+    subgraph "Phase 1: Build (Service Registration)"
+        A1["1. Create WebApplicationBuilder"]
+        A2["2. Configure Serilog<br/>Console logger with CorrelationId template"]
+        A3["3. Load ocelot.json config file"]
+        A4["4. Register Controllers (AuthController)"]
+        A5["5. Register Swagger (API docs)"]
+        A6["6. Register Ocelot routing engine"]
+        A7["7. builder.Build()"]
+        A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7
+    end
+
+    subgraph "Phase 2: Run (HTTP Pipeline)"
+        B1["8. UseRouting()"]
+        B2["9. UseSwagger + SwaggerUI"]
+        B3["10. CorrelationIdMiddleware<br/>(adds X-Correlation-Id header)"]
+        B4["11. ExceptionHandlingMiddleware<br/>(catches errors → JSON responses)"]
+        B5["12. MapControllers()<br/>(AuthController handles /api/auth/*)"]
+        B6["13. UseOcelot()<br/>(proxy unmatched requests to services)"]
+        B7["14. app.Run()<br/>Listening on port 5000"]
+        B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7
+    end
+```
+
+**Key Point:** `MapControllers()` runs BEFORE `UseOcelot()`. This means:
+- `/api/auth/token` → handled by local AuthController
+- `/api/products/*` → Ocelot proxies to Product Service
+- Any unmatched route → Ocelot tries to route it
+
+---
+
+### 11.4 Product / ProductDetail / Cart Service — Startup Sequence
+
+All three follow the same pattern:
+
+```mermaid
+graph TB
+    subgraph "Phase 1: Build (Service Registration)"
+        A1["1. Create WebApplicationBuilder"]
+        A2["2. Configure Serilog<br/>Console logger with CorrelationId"]
+        A3["3. AddControllers()"]
+        A4["4. AddSwaggerGen()"]
+        A5["5. AddMediatR()<br/>Scan assembly for all<br/>Command/Query Handlers"]
+        A6["6. AddSingleton Repository<br/>(ConcurrentDictionary with seed data)"]
+        A7["7. AddJwtAuthentication()<br/>→ JWT Bearer validation<br/>→ AdminOnly policy<br/>→ UserOrAdmin policy"]
+        A8["8. builder.Build()"]
+        A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7 --> A8
+    end
+
+    subgraph "Phase 2: Run (HTTP Pipeline)"
+        B1["9. UseSwagger + SwaggerUI"]
+        B2["10. CorrelationIdMiddleware"]
+        B3["11. ExceptionHandlingMiddleware"]
+        B4["12. UseAuthentication()<br/>(validates JWT token)"]
+        B5["13. UseAuthorization()<br/>(checks Admin/User role)"]
+        B6["14. MapControllers()"]
+        B7["15. app.Run()<br/>Listening on port 5001/5002/5003"]
+        B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7
+    end
+```
+
+**What happens at Step 5 (MediatR scan):**
+
+```mermaid
+graph LR
+    MR["AddMediatR scans assembly"] --> F1["Finds GetAllProductsHandler"]
+    MR --> F2["Finds GetProductByIdHandler"]
+    MR --> F3["Finds CreateProductHandler"]
+    MR --> F4["Finds DeleteProductHandler"]
+    F1 --> REG["All handlers registered in DI<br/>Ready to receive commands/queries"]
+    F2 --> REG
+    F3 --> REG
+    F4 --> REG
+```
+
+**What happens at Step 6 (Repository created):**
+
+```mermaid
+graph LR
+    R["AddSingleton ProductRepository"] --> C["Constructor runs"]
+    C --> S["ConcurrentDictionary created"]
+    S --> D["Seed data loaded:<br/>3 products / 2 details / empty carts"]
+```
+
+**What happens at Step 7 (JWT setup):**
+
+```mermaid
+graph LR
+    J["AddJwtAuthentication()"] --> A["Register JWT Bearer scheme<br/>HS256, Issuer, Audience"]
+    A --> P1["Create AdminOnly policy<br/>(requires Role = Admin)"]
+    P1 --> P2["Create UserOrAdmin policy<br/>(requires Role = User or Admin)"]
+```
+
+---
+
+### 11.5 Order Orchestrator — Startup Sequence
+
+This service has extra setup for HTTP clients and RabbitMQ.
+
+```mermaid
+graph TB
+    subgraph "Phase 1: Build (Service Registration)"
+        A1["1. Create WebApplicationBuilder"]
+        A2["2. Configure Serilog"]
+        A3["3. AddControllers + Swagger"]
+        A4["4. AddMediatR (scan handlers)"]
+        A5["5. AddSingleton OrderRepository"]
+        A6["6. AddJwtAuthentication()"]
+        A7["7. AddHttpClient 'CartService'<br/>BaseAddress: http://cart-service:5003"]
+        A8["8. AddHttpClient 'ProductDetailService'<br/>BaseAddress: http://product-detail-service:5002"]
+        A9["9. Create RabbitMqPublisher<br/>→ Connect to rabbitmq:5672<br/>→ Open channel<br/>→ Register as Singleton"]
+        A10["10. AddScoped CheckoutOrchestrator"]
+        A11["11. builder.Build()"]
+        A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7 --> A8 --> A9 --> A10 --> A11
+    end
+
+    subgraph "Phase 2: Run (HTTP Pipeline)"
+        B1["12. UseSwagger + SwaggerUI"]
+        B2["13. CorrelationIdMiddleware"]
+        B3["14. ExceptionHandlingMiddleware"]
+        B4["15. UseAuthentication"]
+        B5["16. UseAuthorization"]
+        B6["17. MapControllers"]
+        B7["18. app.Run()<br/>Listening on port 5004"]
+        B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7
+    end
+```
+
+**What happens at Step 9 (RabbitMQ connection):**
+
+```mermaid
+graph LR
+    A["RabbitMqPublisher.CreateAsync()"] --> B["Create ConnectionFactory<br/>HostName = rabbitmq"]
+    B --> C["CreateConnectionAsync()"]
+    C --> D["CreateChannelAsync()"]
+    D --> E["Publisher ready<br/>Can publish to exchanges"]
+```
+
+**What happens at Step 10 (CheckoutOrchestrator registered as Scoped):**
+
+```mermaid
+graph LR
+    A["AddScoped means:"] --> B["New instance per HTTP request"]
+    B --> C["Injected with:<br/>OrderRepository<br/>IHttpClientFactory<br/>IMessagePublisher<br/>ILogger"]
+```
+
+---
+
+### 11.6 Notification Service — Startup Sequence
+
+This service is unique — it has a **BackgroundService** that starts automatically.
+
+```mermaid
+graph TB
+    subgraph "Phase 1: Build (Service Registration)"
+        A1["1. Create WebApplicationBuilder"]
+        A2["2. Configure Serilog"]
+        A3["3. AddControllers + Swagger"]
+        A4["4. AddHostedService<br/>NotificationConsumerService"]
+        A5["5. builder.Build()"]
+        A1 --> A2 --> A3 --> A4 --> A5
+    end
+
+    subgraph "Phase 2: Run (HTTP Pipeline + Background)"
+        B1["6. UseSwagger + SwaggerUI"]
+        B2["7. CorrelationIdMiddleware"]
+        B3["8. ExceptionHandlingMiddleware"]
+        B4["9. MapControllers (health endpoint)"]
+        B5["10. app.Run()"]
+        B1 --> B2 --> B3 --> B4 --> B5
+    end
+
+    B5 --> C["Two things run simultaneously:"]
+    C --> D["Kestrel Web Server<br/>Listens on port 5005<br/>(handles /health endpoint)"]
+    C --> E["BackgroundService: ExecuteAsync()"]
+
+    subgraph "BackgroundService Startup"
+        E --> E1["11. Try connecting to RabbitMQ"]
+        E1 --> E2{"Connected?"}
+        E2 -->|"No"| E3["Wait 5 seconds, retry<br/>(up to 10 attempts)"]
+        E3 --> E1
+        E2 -->|"Yes"| E4["12. RabbitMqConsumer.CreateAsync()"]
+        E4 --> E5["13. Subscribe to order.created<br/>Queue: notification.order.created"]
+        E5 --> E6["14. Subscribe to order.failed<br/>Queue: notification.order.failed"]
+        E6 --> E7["15. Enter keep-alive loop<br/>(1s delay, waiting for events)"]
+    end
+```
+
+**What happens when an event arrives:**
+
+```mermaid
+graph LR
+    A["RabbitMQ delivers message"] --> B["Consumer receives bytes"]
+    B --> C["Deserialize JSON<br/>to OrderCreatedEvent<br/>or OrderFailedEvent"]
+    C --> D["Call handler function"]
+    D --> E["Log formatted notification<br/>to console"]
+    E --> F["ACK message<br/>(tell RabbitMQ: done)"]
+```
+
+---
+
+### 11.7 Complete Startup Timeline
+
+Here is the full timeline of what happens from `docker compose up` to "system ready":
+
+```mermaid
+sequenceDiagram
+    participant DC as docker compose
+    participant RMQ as RabbitMQ
+    participant CON as Consul
+    participant PS as Product Service
+    participant PDS as ProductDetail Service
+    participant CS as Cart Service
+    participant OO as Order Orchestrator
+    participant NS as Notification Service
+    participant GW as API Gateway
+
+    DC->>RMQ: Start container
+    DC->>CON: Start container
+    RMQ->>RMQ: Initialize broker
+    RMQ->>RMQ: Healthcheck ping (every 10s)
+
+    DC->>PS: Start container
+    PS->>PS: Serilog setup
+    PS->>PS: Register MediatR (scan 4 handlers)
+    PS->>PS: Create ProductRepository (3 seed products)
+    PS->>PS: Setup JWT auth + policies
+    PS->>PS: Build middleware pipeline
+    PS->>PS: Listening on :5001
+
+    DC->>PDS: Start container
+    PDS->>PDS: Same setup as Product Service
+    PDS->>PDS: Create ProductDetailRepository (2 seed items)
+    PDS->>PDS: Listening on :5002
+
+    DC->>CS: Start container
+    CS->>CS: Same setup as Product Service
+    CS->>CS: Create CartRepository (empty)
+    CS->>CS: Listening on :5003
+
+    Note over RMQ: Healthcheck passes!
+
+    DC->>OO: Start container
+    OO->>OO: Serilog + MediatR + JWT setup
+    OO->>OO: Create OrderRepository (empty)
+    OO->>OO: Register HttpClient for CartService
+    OO->>OO: Register HttpClient for ProductDetailService
+    OO->>RMQ: Connect RabbitMqPublisher
+    RMQ-->>OO: Connection established
+    OO->>OO: Register CheckoutOrchestrator
+    OO->>OO: Listening on :5004
+
+    DC->>NS: Start container
+    NS->>NS: Serilog setup
+    NS->>NS: Register NotificationConsumerService
+    NS->>NS: Build pipeline + start Kestrel on :5005
+    NS->>NS: BackgroundService.ExecuteAsync() begins
+    NS->>RMQ: Try connect (attempt 1)
+    RMQ-->>NS: Connected!
+    NS->>RMQ: Subscribe to order.created queue
+    NS->>RMQ: Subscribe to order.failed queue
+    NS->>NS: Listening for events...
+
+    DC->>GW: Start container
+    GW->>GW: Serilog setup
+    GW->>GW: Load ocelot.json (7 routes)
+    GW->>GW: Register Ocelot engine
+    GW->>GW: Build pipeline
+    GW->>GW: Listening on :5000
+
+    Note over DC,GW: ALL SERVICES READY!
+```
+
+---
+
+### 11.8 What Happens When You Hit an API
+
+After startup, here's what executes when a request comes in:
+
+#### Example: POST /api/products (Create a product)
+
+```mermaid
+graph TB
+    A["Client sends POST /api/products<br/>Header: Authorization: Bearer {token}<br/>Body: {name, category, description}"]
+
+    A --> B["API Gateway :5000"]
+
+    subgraph "Gateway Pipeline"
+        B --> B1["CorrelationIdMiddleware<br/>→ Generate X-Correlation-Id"]
+        B1 --> B2["ExceptionHandlingMiddleware<br/>→ Wrap in try/catch"]
+        B2 --> B3["MapControllers<br/>→ No match for /api/products"]
+        B3 --> B4["Ocelot<br/>→ Match route → proxy to :5001"]
+    end
+
+    B4 --> C["Product Service :5001"]
+
+    subgraph "Product Service Pipeline"
+        C --> C1["CorrelationIdMiddleware<br/>→ Read X-Correlation-Id from header"]
+        C1 --> C2["ExceptionHandlingMiddleware<br/>→ Wrap in try/catch"]
+        C2 --> C3["UseAuthentication<br/>→ Extract JWT → validate signature,<br/>expiry, issuer, audience"]
+        C3 --> C4["UseAuthorization<br/>→ Check [Authorize AdminOnly]<br/>→ Role must be Admin"]
+        C4 --> C5["ProductsController.Create()"]
+    end
+
+    subgraph "Controller → Handler → Repository"
+        C5 --> D1["new CreateProductCommand<br/>(name, category, description)"]
+        D1 --> D2["MediatR.Send(command)"]
+        D2 --> D3["CreateProductHandler.Handle()"]
+        D3 --> D4["new Product {<br/>Id = Guid.NewGuid(),<br/>IsActive = true,<br/>CreatedAt = DateTime.UtcNow}"]
+        D4 --> D5["repository.Add(product)"]
+        D5 --> D6["ConcurrentDictionary.AddOrUpdate()"]
+    end
+
+    D6 --> E["Response: 201 Created<br/>{success: true, data: {product}}"]
+    E --> C
+    C --> B
+    B --> A
+```
+
+#### Example: POST /api/orders/checkout/{userId} (Checkout)
+
+```mermaid
+graph TB
+    A["Client: POST /api/orders/checkout/{userId}"]
+    A --> GW["Gateway → Ocelot → proxy to :5004"]
+
+    GW --> OO["Order Orchestrator Pipeline:<br/>Correlation → Exception → Auth → Authz"]
+    OO --> CTRL["OrdersController.Checkout(userId)"]
+    CTRL --> ORCH["CheckoutOrchestrator.ExecuteCheckout(userId)"]
+
+    ORCH --> S1["Step 1: _cartHttpClient.GetAsync()<br/>→ HTTP GET cart-service:5003/api/cart/{userId}"]
+    S1 --> CS["Cart Service runs its full pipeline:<br/>Correlation → Exception → Auth → Authz<br/>→ CartController → GetCartQuery<br/>→ GetCartHandler → Repository"]
+    CS --> S1R["Returns cart data"]
+
+    S1R --> S2["Step 2: _productDetailHttpClient.GetAsync()<br/>→ HTTP GET product-detail-service:5002<br/>/api/productdetails/{detailId}"]
+    S2 --> PDS["ProductDetail Service runs full pipeline:<br/>→ ProductDetailsController<br/>→ GetProductDetailByIdQuery → Handler"]
+    PDS --> S2R["Returns detail data"]
+
+    S2R --> S3["Step 3: Create Order locally<br/>→ Map CartItems to OrderItems<br/>→ repository.Add(order)"]
+
+    S3 --> S4["Step 4: _cartHttpClient.DeleteAsync()<br/>→ HTTP DELETE cart-service:5003/api/cart/{userId}"]
+    S4 --> CS2["Cart Service:<br/>→ ClearCartCommand → ClearCartHandler"]
+
+    S4 --> S5["Step 5: _messagePublisher.PublishAsync()<br/>→ Serialize OrderCreatedEvent<br/>→ Publish to RabbitMQ exchange"]
+    S5 --> RMQ["RabbitMQ routes to notification.order.created queue"]
+    RMQ --> NS["Notification Service:<br/>→ Consumer receives message<br/>→ Deserialize → Log to console"]
+
+    S5 --> RESP["Response: 200 OK<br/>{order with items, status: Confirmed}"]
+```
+
+---
+
+### 11.9 Quick Reference: Startup Execution Order per Service
+
+| # | What Executes | Method / Class | When |
+|---|------|------|------|
+| 1 | Entry point | `Program.cs` (top-level statements) | Container starts |
+| 2 | Logger setup | `new LoggerConfiguration().WriteTo.Console()` | First thing |
+| 3 | Serilog host | `builder.Host.UseSerilog()` | Replaces default logger |
+| 4 | Controller registration | `builder.Services.AddControllers()` | Scans for `[ApiController]` classes |
+| 5 | Swagger registration | `builder.Services.AddSwaggerGen()` | Generates OpenAPI spec |
+| 6 | MediatR registration | `builder.Services.AddMediatR()` | Scans assembly for all `IRequestHandler<>` |
+| 7 | Repository creation | `builder.Services.AddSingleton<XxxRepository>()` | Creates in-memory store + seed data |
+| 8 | JWT setup | `builder.Services.AddJwtAuthentication()` | Configures Bearer auth + role policies |
+| 9 | HTTP Client setup | `builder.Services.AddHttpClient()` | Only in Order Orchestrator |
+| 10 | RabbitMQ publisher | `RabbitMqPublisher.CreateAsync()` | Only in Order Orchestrator |
+| 11 | Background service | `builder.Services.AddHostedService<>()` | Only in Notification Service |
+| 12 | Build app | `builder.Build()` | Creates WebApplication with all services |
+| 13 | Swagger middleware | `app.UseSwagger()` | Serves /swagger endpoint |
+| 14 | Correlation middleware | `app.UseMiddleware<CorrelationIdMiddleware>()` | Runs on every request |
+| 15 | Exception middleware | `app.UseMiddleware<ExceptionHandlingMiddleware>()` | Runs on every request |
+| 16 | Auth middleware | `app.UseAuthentication()` | Validates JWT tokens |
+| 17 | Authz middleware | `app.UseAuthorization()` | Checks role policies |
+| 18 | Map controllers | `app.MapControllers()` | Connects routes to controller actions |
+| 19 | Start server | `app.Run()` | Kestrel starts listening on assigned port |
