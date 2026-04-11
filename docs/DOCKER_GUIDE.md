@@ -14,8 +14,9 @@
 6. [What is Docker Compose?](#6-what-is-docker-compose)
 7. [docker-compose.yml Step-by-Step Breakdown](#7-docker-composeyml-step-by-step-breakdown)
 8. [How to Run Everything](#8-how-to-run-everything)
-9. [Common Docker Commands](#9-common-docker-commands)
-10. [Troubleshooting](#10-troubleshooting)
+9. [Restarting Any API](#9-restarting-any-api)
+10. [Common Docker Commands](#10-common-docker-commands)
+11. [Troubleshooting](#11-troubleshooting)
 
 ---
 
@@ -451,7 +452,45 @@ docker compose down
 
 ---
 
-## 9. Common Docker Commands
+## 9. Restarting Any API
+
+### Restart one API container
+
+```bash
+docker compose restart api-gateway
+```
+
+You can replace `api-gateway` with any service name from `docker-compose.yml`:
+
+| API | Docker Compose service name | Restart command |
+|-----|-----------------------------|-----------------|
+| API Gateway | `api-gateway` | `docker compose restart api-gateway` |
+| Product Service | `product-service` | `docker compose restart product-service` |
+| Product Detail Service | `product-detail_service` | `docker compose restart product-detail_service` |
+| Cart Service | `cart.service` | `docker compose restart cart.service` |
+| Order Orchestrator | `order-orchestrator-service` | `docker compose restart order-orchestrator-service` |
+| Notification Service | `notification-service` | `docker compose restart notification-service` |
+
+### When restart is not enough
+
+`docker compose restart` only restarts the existing container. If you changed code, Dockerfile content, or configuration baked into the image, rebuild that service:
+
+```bash
+docker compose up --build -d api-gateway
+```
+
+This rebuilds the image and recreates the container for that one service.
+
+### Verify after restart
+
+```bash
+docker compose ps
+docker compose logs -f api-gateway
+```
+
+---
+
+## 10. Common Docker Commands
 
 | Command | What it does |
 |---------|-------------|
@@ -469,7 +508,7 @@ docker compose down
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 ### Container can't connect to RabbitMQ
 - **Cause:** Service started before RabbitMQ was ready.

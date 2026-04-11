@@ -1,11 +1,8 @@
 using Ocelot.DependencyInjection;
 using Ocelot.Middleware;
 using Serilog;
+using Shared.Auth;
 using Shared.Middleware;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
-using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -52,12 +49,13 @@ app.MapPost("/api/auth/login", (LoginRequest request) =>
     if (!ValidateUserCredentials(request.Email, request.Password))
         return Results.Unauthorized();
 
-    var token = GenerateToken(request.Email, "User", app.Configuration);
+    var userId = Guid.NewGuid().ToString();
+    var token = JwtHelper.GenerateToken(userId, "User", request.Email);
     return Results.Ok(new LoginResponse
     {
         Token = token,
         Role = "User",
-        UserId = Guid.NewGuid().ToString(),
+        UserId = userId,
         Email = request.Email
     });
 });
@@ -73,12 +71,13 @@ app.MapPost("/api/auth/admin/login", (AdminLoginRequest request) =>
     if (!ValidateAdminCredentials(request.Email, request.Password))
         return Results.Unauthorized();
 
-    var token = GenerateToken(request.Email, "Admin", app.Configuration);
+    var userId = Guid.NewGuid().ToString();
+    var token = JwtHelper.GenerateToken(userId, "Admin", request.Email);
     return Results.Ok(new LoginResponse
     {
         Token = token,
         Role = "Admin",
-        UserId = Guid.NewGuid().ToString(),
+        UserId = userId,
         Email = request.Email
     });
 });
@@ -109,30 +108,5 @@ static bool ValidateAdminCredentials(string email, string password)
     var validAdmins = new[] { "admin@ecommerce.com" };
     return validAdmins.Contains(email) && password?.Length > 5;
 }
-
-static string GenerateToken(string email, string role, IConfiguration configuration)
-{
-    var jwtSecret = configuration["Jwt:Secret"] ?? "your-super-secret-key-min-32-characters-long!";
-    var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
-    var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-    var claims = new[]
-    {
-        new Claim(ClaimTypes.Email, email),
-        new Claim(ClaimTypes.Role, role),
-        new Claim("UserId", Guid.NewGuid().ToString())
-    };
-
-    var token = new JwtSecurityToken(
-        issuer: "EcommerceAPI",
-        audience: "EcommerceClient",
-        claims: claims,
-        expires: DateTime.UtcNow.AddHours(24),
-        signingCredentials: credentials
-    );
-
-    return new JwtSecurityTokenHandler().WriteToken(token);
-}
-
 
 

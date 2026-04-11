@@ -87,6 +87,51 @@ dotnet run --project src/ApiGateway
 
 > **Note:** For local development without Docker, set `RabbitMQ:Host` to `localhost` and update `ServiceUrls` in appsettings.
 
+## Restarting a Service
+
+### With Docker Compose
+
+```bash
+# Restart one service
+docker compose restart api-gateway
+
+# Restart any other API by service name
+docker compose restart product-service
+docker compose restart product-detail_service
+docker compose restart cart.service
+docker compose restart order-orchestrator-service
+docker compose restart notification-service
+
+# Check status after restart
+docker compose ps
+```
+
+If you changed code and need the container to pick up a new build, rebuild and recreate that service instead of a plain restart:
+
+```bash
+docker compose up --build -d api-gateway
+```
+
+Replace `api-gateway` with any service name from `docker-compose.yml`.
+
+### Without Docker
+
+Stop the running API with `Ctrl+C`, then start it again from the repo root:
+
+```bash
+dotnet run --project src/ApiGateway
+```
+
+Examples for other services:
+
+```bash
+dotnet run --project src/ProductService
+dotnet run --project src/ProductDetailService
+dotnet run --project src/CartService
+dotnet run --project src/OrderOrchestratorService
+dotnet run --project src/NotificationService
+```
+
 ## Testing the Flow
 
 ### Step-by-step with curl:
